@@ -6,43 +6,54 @@ param(
 # Define regex for RFC1918 addresses
 $privateIpPattern = '^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})$'
 
-$data = Import-Csv -Path $CsvPath
+data = Import-Csv -Path $CsvPath
 
 if (-not $data) {
     Write-Error "No data found in the CSV file."
     exit 1
 }
 
-# Find RFC1918 count for each column
-$columns = $data[0].PSObject.Properties.Name
-$columnCounts = @{}
-
-foreach ($column in $columns) {
-    $count = ($data | Where-Object { $_.$column -match $privateIpPattern }).Count
-    $columnCounts[$column] = $count
+# Gather all IPs from all columns
+$allIps = @()
+foreach ($row in $data) {
+    foreach ($column in $row.PSObject.Properties.Name) {
+        $ip = $row.$column
+        if ($ip -match '^\d{1,3}(\.\d{1,3}){3}$') {
+            $allIps += $ip
+        }
+    }
 }
 
-# Most and least RFC1918
-$mostColumn = $columnCounts.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 1
-$leastColumn = $columnCounts.GetEnumerator() | Sort-Object -Property Value,Key | Select-Object -First 1
+# Group and count
+$ipGroups = $allIps | Group-Object | Sort-Object Count -Descending
 
-if ($mostColumn.Value -eq 0) {
-    Write-Output "No RFC1918 IP addresses found in any column."
-    exit 0
+# Split private/public
+$privateIps = $ipGroups | Where-Object { $_.Name -match $privateIpPattern }
+$publicIps  = $ipGroups | Where-Object { $_.Name -notmatch $privateIpPattern }
+
+# Top 10 of each
+$topPrivate = $privateIps | Select-Object -First 10
+$topPublic  = $publicIps  | Select-Object -First 10
+
+Write-Output "`nTop 10 RFC1918 (Private) IPs:"
+$topPrivate | ForEach-Object {
+    Write-Output "$($_.Name): $($_.Count)"
 }
 
-# Source IPs (internal)
-$sourceColumn = $mostColumn.Key
-$uniqueSourceIPs = $data | Where-Object { $_.$sourceColumn -match $privateIpPattern } | Select-Object -ExpandProperty $sourceColumn -Unique
-$sourceIPCount = $uniqueSourceIPs.Count
+Write-Output "`nTop 10 Public (non-RFC1918) IPs:"
+$topPublic | ForEach-Object {
+    Write-Output "$($_.Name): $($_.Count)"
+}
 
-Write-Output "Source IPs column: $sourceColumn"
-Write-Output "Source IP Count: $sourceIPCount"
-
-# External IPs (least RFC1918)
-$externalColumn = $leastColumn.Key
-$uniqueExternalIPs = $data | Where-Object { $_.$externalColumn -notmatch $privateIpPattern } | Select-Object -ExpandProperty $externalColumn -Unique
-$externalIPCount = $uniqueExternalIPs.Count
-
-Write-Output "External IPs column: $externalColumn"
-Write-Output "External IP Count: $externalIPCount"
+# Geolocation lookup for top 10 public IPs (uses ip-api.com)
+Write-Output "`nGeolocation for Top 10 Public IPs:"
+foreach ($entry in $topPublic) {
+    $ip = $entry.Name
+    try {
+        $geo = Invoke-RestMethod -Uri "http://ip-api.com/json/$ip" -TimeoutSec 5
+        $country = if ($geo.status -eq 'success') { $geo.country } else { "Unknown" }
+    } catch {
+        $country = "Lookup Failed"
+    }
+    Write-Output "$ip: $country"
+}
