@@ -6,7 +6,7 @@ param(
 # Define regex for RFC1918 addresses
 $privateIpPattern = '^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})$'
 
-data = Import-Csv -Path $CsvPath
+$data = Import-Csv -Path $CsvPath
 
 if (-not $data) {
     Write-Error "No data found in the CSV file."
